@@ -13,10 +13,10 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase safely to prevent build crashes
-let app;
-let auth;
-let db;
-let storage;
+let app: any;
+let auth: any;
+let db: any;
+let storage: any;
 
 try {
   app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
