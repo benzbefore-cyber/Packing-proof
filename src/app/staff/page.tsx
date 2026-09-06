@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, storage } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, query, where, getDocs, doc, getDoc, writeBatch, onSnapshot } from "firebase/firestore";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { Html5QrcodeScanner } from "html5-qrcode";
 import { Camera, LogOut, Video, StopCircle, UploadCloud, CheckCircle2, PackagePlus, ScanBarcode, Printer, Plus, Trash2, ShieldCheck, Search, FileUp, Usb, Archive, User, ClipboardList, CheckCircle, Eye, XCircle, Download } from "lucide-react";
 import { signOut } from "firebase/auth";
@@ -416,37 +417,55 @@ export default function StaffPortal() {
     
     try {
       setUploadProgress(10); 
-      const formData = new FormData();
-      formData.append("file", videoBlob, `${trackingNumber}.webm`);
-      formData.append("trackingNumber", trackingNumber);
       
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const filename = `${trackingNumber}-${Date.now()}.webm`;
+      const storageRef = ref(storage, `uploads/videos/${filename}`);
+      const uploadTask = uploadBytesResumable(storageRef, videoBlob);
       
-      setUploadProgress(80);
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || "Failed to upload");
+      uploadTask.on(
+        "state_changed",
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(Math.round(progress) === 100 ? 99 : Math.round(progress));
+        },
+        (error) => {
+          console.error("Upload error:", error);
+          setErrorMessage(error.message || "Failed to upload video");
+          setIsUploading(false);
+        },
+        async () => {
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            await addDoc(collection(db, "packages"), { trackingNumber, videoUrl: downloadURL, staffId: auth.currentUser?.uid, staffEmail: auth.currentUser?.email, staffName: staffName || auth.currentUser?.email || "unknown", timestamp: serverTimestamp() });
+            
+            if (orderToPack && orderToPack.id) {
+              const batch = writeBatch(db);
+              batch.update(doc(db, "orders", orderToPack.id), { status: "packed" });
+              await batch.commit();
+            }
 
-      const downloadURL = data.url;
-      await addDoc(collection(db, "packages"), { trackingNumber, videoUrl: downloadURL, staffId: auth.currentUser?.uid, staffEmail: auth.currentUser?.email, staffName: staffName || auth.currentUser?.email || "unknown", timestamp: serverTimestamp() });
-      
-      if (orderToPack && orderToPack.id) {
-        const batch = writeBatch(db);
-        batch.update(doc(db, "orders", orderToPack.id), { status: "packed" });
-        await batch.commit();
-      }
+            await fetch("/api/notify", {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ trackingNumber, customerName: orderToPack?.customerName })
+            });
 
-      await fetch("/api/notify", {
-         method: "POST",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ trackingNumber, customerName: orderToPack?.customerName })
-      });
-      
-      setIsUploading(false);
-      setSuccessMessage("Video uploaded and linked successfully!");
-      setTrackingNumber(""); setVideoBlob(null); setUploadProgress(100);
-      setOrderToPack(null); setScannedItems({});
+            setUploadProgress(100);
+            setSuccessMessage("บันทึกวิดีโอและข้อมูลสำเร็จ!");
+            setTimeout(() => {
+              setTrackingNumber(""); setVideoBlob(null); setUploadProgress(100);
+              setOrderToPack(null); setScannedItems({});
+            }, 3000);
+          } catch (err: any) {
+             setErrorMessage(err.message || "Failed to save data");
+          } finally {
+             setIsUploading(false);
+          }
+        }
+      );
     } catch (err: any) {
-      setErrorMessage(err.message); setIsUploading(false); setUploadProgress(0);
+      setErrorMessage(err.message || "An unexpected error occurred.");
+      setIsUploading(false);
     }
   };
 

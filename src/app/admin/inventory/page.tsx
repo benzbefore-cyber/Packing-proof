@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, query, onSnapshot } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { Download } from "lucide-react";
 import Papa from "papaparse";
@@ -31,12 +32,11 @@ export default function AdminInventory() {
     try {
       let imageUrl = null;
       if (imageFile) {
-        const formData = new FormData();
-        formData.append("file", imageFile);
-        const res = await fetch("/api/upload-image", { method: "POST", body: formData });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.message || "Failed to upload image.");
-        imageUrl = data.url;
+        const extension = imageFile.name.split('.').pop() || "png";
+        const filename = `product-${Date.now()}.${extension}`;
+        const storageRef = ref(storage, `uploads/products/${filename}`);
+        await uploadBytes(storageRef, imageFile);
+        imageUrl = await getDownloadURL(storageRef);
       }
 
       await addDoc(collection(db, "products"), {
