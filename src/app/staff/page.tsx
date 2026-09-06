@@ -49,6 +49,8 @@ export default function StaffPortal() {
   const [selectedSummaryOrder, setSelectedSummaryOrder] = useState<any>(null);
   const [summaryVideoUrl, setSummaryVideoUrl] = useState<string>("");
   const [loadingSummaryVideo, setLoadingSummaryVideo] = useState(false);
+  const [summaryDate, setSummaryDate] = useState(() => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().split('T')[0]; });
+  const [summarySearch, setSummarySearch] = useState("");
 
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -104,33 +106,45 @@ export default function StaffPortal() {
   }, [activeTab]);
 
   // 3. Fetch Summary when 'summary' tab is active
+  const fetchSummary = async () => {
+    setLoadingSummary(true);
+    try {
+      let q;
+      if (summarySearch.trim()) {
+         // If searching by tracking or order ID, don't limit by date to find it anywhere
+         q = query(collection(db, "orders"));
+      } else {
+         const targetDate = new Date(summaryDate);
+         targetDate.setHours(0, 0, 0, 0);
+         const nextDate = new Date(targetDate);
+         nextDate.setDate(targetDate.getDate() + 1);
+         q = query(collection(db, "orders"), where("timestamp", ">=", targetDate), where("timestamp", "<", nextDate));
+      }
+      
+      const snap = await getDocs(q);
+      let data = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() as any }))
+        .filter(d => d.status === "packed" && (d.staffId === auth.currentUser?.uid || d.staffEmail === auth.currentUser?.email));
+      
+      if (summarySearch.trim()) {
+         const s = summarySearch.trim().toLowerCase();
+         data = data.filter(d => (d.flashTracking && d.flashTracking.toLowerCase().includes(s)) || (d.shopOrderId && d.shopOrderId.toLowerCase().includes(s)));
+      }
+      
+      data.sort((a, b) => b.timestamp?.toMillis() - a.timestamp?.toMillis());
+      setSummaryData(data);
+    } catch (error) {
+      console.error("Error fetching summary:", error);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'summary') {
-      const fetchSummary = async () => {
-        setLoadingSummary(true);
-        try {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          
-          const q = query(collection(db, "orders"), where("timestamp", ">=", today));
-          const snap = await getDocs(q);
-          const data = snap.docs
-            .map(doc => ({ id: doc.id, ...doc.data() as any }))
-            // Filter locally: Only 'packed' and processed by this staff
-            .filter(d => d.status === "packed" && (d.staffId === auth.currentUser?.uid || d.staffEmail === auth.currentUser?.email));
-          
-          // Sort by newest first
-          data.sort((a, b) => b.timestamp?.toMillis() - a.timestamp?.toMillis());
-          setSummaryData(data);
-        } catch (error) {
-          console.error("Error fetching summary:", error);
-        } finally {
-          setLoadingSummary(false);
-        }
-      };
       fetchSummary();
     }
-  }, [activeTab]);
+  }, [activeTab, summaryDate]);
 
   const handleViewSummaryDetails = async (order: any) => {
     setSelectedSummaryOrder(order);
@@ -828,13 +842,18 @@ export default function StaffPortal() {
         {/* --- TAB: DAILY SUMMARY --- */}
         {activeTab === 'summary' && (
           <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
               <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <CheckCircle color="var(--success-color)" /> สรุปผลงานวันนี้
+                <CheckCircle color="var(--success-color)" /> สรุปผลงาน
               </h3>
-              <button onClick={handleExportSummary} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }} disabled={loadingSummary || summaryData.length === 0}>
-                <Download size={18} /> ส่งออกเป็น CSV
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                 <input type="date" className="input-field" value={summaryDate} onChange={(e) => {setSummaryDate(e.target.value); setSummarySearch("");}} style={{ padding: '0.5rem', width: 'auto' }} />
+                 <input type="text" className="input-field" placeholder="ค้นหา Tracking / Order ID..." value={summarySearch} onChange={(e) => setSummarySearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchSummary()} style={{ padding: '0.5rem', width: '200px' }} />
+                 <button onClick={fetchSummary} className="btn-primary" style={{ padding: '0.5rem 1rem' }}><Search size={18} /></button>
+                 <button onClick={handleExportSummary} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }} disabled={loadingSummary || summaryData.length === 0}>
+                   <Download size={18} /> ส่งออก CSV
+                 </button>
+              </div>
             </div>
             
             {loadingSummary ? (
